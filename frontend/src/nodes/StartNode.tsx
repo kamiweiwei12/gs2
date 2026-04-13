@@ -1,6 +1,6 @@
 import React from 'react'
 import { Handle, Position, NodeProps } from 'reactflow'
-import { getFlowNodeHighlighted, type FlowNodeData } from '../utils/dslParser'
+import { CONTINUATION_HANDLE, getFlowNodeHighlighted, type FlowNodeData } from '../utils/dslParser'
 
 const StartNode: React.FC<NodeProps<FlowNodeData>> = ({ data }) => {
   const highlighted = getFlowNodeHighlighted(data)
@@ -15,7 +15,7 @@ const StartNode: React.FC<NodeProps<FlowNodeData>> = ({ data }) => {
       transition: 'all 200ms ease'
     }}>
       <div style={{ fontWeight: 700, fontSize: 15 }}>🚀 Start</div>
-      <Handle type="source" position={Position.Bottom} id="out" style={{ background: '#fff', width: 12, height: 12 }} />
+      <Handle type="source" position={Position.Bottom} id={CONTINUATION_HANDLE} style={{ background: '#fff', width: 12, height: 12 }} />
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import React from 'react'
 import { Handle, Position, NodeProps } from 'reactflow'
-import { getFlowNodeHighlighted, getFlowNodeParams, type FlowNodeData } from '../utils/dslParser'
+import { CONTINUATION_HANDLE, getFlowNodeHighlighted, getFlowNodeParams, type FlowNodeData } from '../utils/dslParser'
 
 const LoopNode: React.FC<NodeProps<FlowNodeData>> = ({ data }) => {
   const highlighted = getFlowNodeHighlighted(data)
@@ -22,7 +22,7 @@ const LoopNode: React.FC<NodeProps<FlowNodeData>> = ({ data }) => {
       <Handle className="node-target-handle" type="target" position={Position.Top} id="in" style={{ background: '#fff', width: 12, height: 12 }} />
       <div style={{ fontWeight: 700, fontSize: 14 }}>🔁 Loop</div>
       <div style={{ fontSize: 12, marginTop: 4, opacity: 0.9 }}>{condition || `×${iterations}`}</div>
-      <Handle type="source" position={Position.Bottom} id="out" style={{ background: '#fff', width: 12, height: 12 }} />
+      <Handle type="source" position={Position.Bottom} id={CONTINUATION_HANDLE} style={{ background: '#fff', width: 12, height: 12 }} />
     </div>
   )
 }

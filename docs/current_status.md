@@ -499,6 +499,27 @@
 - 若程式碼需要引用 continuation / branch handle，優先從 `dslParser.ts` 導入共用常數，不要再直接散落寫 `'out'` / `'true'` / `'false'`
 - source handle contract 現在除了規則一致外，命名來源也已一致；後續若要調整 handle 命名，應優先從共用常數出發
 
+### 2.30 單一路徑 renderer 的 continuation handle 命名來源已收斂到共用常數
+
+檔案：
+
+- `frontend/src/nodes/StartNode.tsx`
+- `frontend/src/nodes/ActionNode.tsx`
+- `frontend/src/nodes/LoopNode.tsx`
+
+本輪延續上一輪的 source handle 命名來源收斂，只處理 renderer 端剩餘的單一路徑 continuation handle 硬編碼，結果如下：
+
+- `StartNode` / `ActionNode` / `LoopNode` 內原本散落的 `id="out"`，現在都改為引用 `CONTINUATION_HANDLE`
+- 已順手盤點 `frontend/src/nodes/**/*.tsx` 與 `frontend/src/components/**/*.tsx`，本輪範圍內未再發現 UI renderer / editor 端殘留硬編碼 `'out'` / `'true'` / `'false'`
+- 本輪沒有修改 store、execution logic、`node.data.params` 約定、FlowEditor 架構、DSL 格式，也沒有新增 UI state 或行為分支
+- 本輪完成後重新執行 `npm run typecheck`、`npm run build`，確認皆通過
+- 重新盤點 `frontend/src/**/*.ts*` 的 `as any` 後，結果仍為 0 筆
+
+目前規則：
+
+- 單一路徑 renderer 若需要 continuation source handle，一律從 `dslParser.ts` 導入 `CONTINUATION_HANDLE`，不要再直接寫 `id="out"`
+- 目前 continuation handle 的命名來源已對齊到 DSL helper / validator / condition renderer / start-action-loop renderer；後續若要調整命名，應只從共用常數出發
+
 ---
 
 ## 3. 目前已確認解掉的問題
@@ -517,6 +538,7 @@
 - Start / Action / Loop 節點 continuation edge 原本只在 renderer / DSL 邊隱含使用 `out` handle，但 validator 尚未把這個 source handle contract 顯式化
 - Flow → DSL 內 continuation edge 的相容判定原本分散在多處 inline condition，後續調整時容易出現規則分叉
 - source handle 的命名來源原本仍散落硬編碼 `'out'` / `'true'` / `'false'`，後續若調整契約名稱容易漏改
+- Start / Action / Loop renderer 端原本仍殘留 `id="out"` 硬編碼，導致 continuation handle 的命名來源尚未完全收斂
 
 ### 已驗證
 
@@ -549,6 +571,9 @@
 - 本輪完成後再次搜尋 `frontend/src/**/*.ts*`，`as any` 仍為 0 筆
 - source handle 共用常數收斂後，`npm run typecheck` 再次成功
 - source handle 共用常數收斂後，`npm run build` 再次成功
+- 本輪完成後再次搜尋 `frontend/src/**/*.ts*`，`as any` 仍為 0 筆
+- 單一路徑 renderer continuation handle 常數收斂後，`npm run typecheck` 再次成功
+- 單一路徑 renderer continuation handle 常數收斂後，`npm run build` 再次成功
 - 本輪完成後再次搜尋 `frontend/src/**/*.ts*`，`as any` 仍為 0 筆
 - Vite production build 可產出 `dist/` 結果
 - 開發伺服器可啟動（原本 5173 被占用，實際跑在 5174）
@@ -596,6 +621,21 @@
 - 驗證方式與結果
 - 下一個建議原子任務
 
+### Git / GitHub 版本記錄規則
+
+之後每完成一個原子任務，除了更新 `docs/current_status.md`，也要同步做 git 版本記錄，方便回撤：
+
+1. 先確認本輪 checkpoint 已寫清楚變動內容
+2. 以單一原子任務為單位建立一次 commit，不要把多個不相關任務混在同一個版本
+3. commit message 需能清楚描述本輪變更，最好帶上 checkpoint 編號，例如：`checkpoint 2.30: unify renderer continuation handle constant`
+4. commit 後推到 GitHub 遠端，讓每一輪小改動都有可回退的版本點
+
+目前固定要求：
+
+- 文件與程式碼的變更摘要要能互相對照
+- 每一輪只保留一個明確主題，避免 commit scope 失焦
+- 若只是提出建議但未實作，應記錄在 checkpoint，不要混成已完成版本
+
 ### 新對話規則
 
 未來如果重開新對話，請先讀：
@@ -610,15 +650,15 @@
 
 最合理的下一步是：
 
-1. 把 `frontend/src/nodes/StartNode.tsx`、`ActionNode.tsx`、`LoopNode.tsx` 內的 `id="out"` 改成共用 `CONTINUATION_HANDLE`
-2. 順手盤點是否還有 UI renderer / editor 端殘留硬編碼 handle 名稱，維持這一輪只做命名來源收斂、不改行為
+1. 盤點 UI / editor / parser / validator 中是否還有 branch handle 硬編碼殘留
+2. 若有殘留，延續目前做法，只做純命名來源統一，不改任何行為或 DSL 格式
 3. 完成後執行 `npm run typecheck`、`npm run build`，並確認 `frontend/src/**/*.ts*` 仍維持無 `as any`
-4. 更新 checkpoint，記錄 continuation handle 的共用常數已從 DSL / validator / condition renderer 擴展到其餘單一路徑 renderer
+4. 更新 checkpoint，記錄 branch handle 的命名來源是否已完全收口，或列出明確剩餘點
 
 ---
 
 ## 7. 本次 checkpoint 摘要
 
-目前 frontend 的流程編輯器資料模型已大致完成第一輪收斂：**業務資料集中到 `node.data.params`，UI 狀態保留在 `node.data` 本體**。Inspector、FlowEditor、ChatPanel、DSL parser、executionEngine 已完成第一輪對齊，且 build、`tsc --noEmit`、`npm run typecheck` 都已成功；最新三輪先把 `start` / `action` / `loop` 的 continuation edge 顯式 `out` handle 契約補進 validator，再把 `flowToDSL()` 內 continuation edge 的相容判定收斂到單一 `isContinuationEdge()` helper，最後進一步導出 `CONTINUATION_HANDLE` / `CONDITION_TRUE_HANDLE` / `CONDITION_FALSE_HANDLE` 共用常數，讓 source handle contract 不只規則一致，連命名來源也更集中。
+目前 frontend 的流程編輯器資料模型已大致完成第一輪收斂：**業務資料集中到 `node.data.params`，UI 狀態保留在 `node.data` 本體**。Inspector、FlowEditor、ChatPanel、DSL parser、executionEngine 已完成第一輪對齊，且 build、`tsc --noEmit`、`npm run typecheck` 都已成功；最新幾輪先把 `start` / `action` / `loop` 的 continuation edge 顯式 `out` handle 契約補進 validator，再把 `flowToDSL()` 內 continuation edge 的相容判定收斂到單一 `isContinuationEdge()` helper，接著導出 `CONTINUATION_HANDLE` / `CONDITION_TRUE_HANDLE` / `CONDITION_FALSE_HANDLE` 共用常數，最後把 `StartNode` / `ActionNode` / `LoopNode` 內剩餘的 `id="out"` 也統一改成引用 `CONTINUATION_HANDLE`，讓 continuation handle 的命名來源進一步完整對齊到 DSL helper / validator / condition renderer / 單一路徑 renderer。
 
 此外，`FlowEditor` / `Stage` / `Toolbar` 周邊的盤點也已完成：目前沒有直接讀寫 `node.data` 業務欄位的殘留點。四個 node renderer、InspectorPanel 三個 editor，以及 `flowStore.ts` 內最後一個 `params` 合併 `as any` 都已清理完成；目前 `frontend/src/**/*.ts*` 已沒有 `as any` 使用點。最新幾輪也已補上 FlowEditor 的拖曳連線即時驗證回饋：合法 target 會顯示綠色高亮、不合法 target 會顯示紅色高亮，拖曳到不合法 target 時右上角會顯示 validator reason，且這個 preview reason 與實際 `onConnect` 失敗後的錯誤提示現在已統一為同一個 overlay 呈現；preview 狀態會在拖曳結束時清除，同時維持 DSL / execution logic 與既有資料模型不變。本輪完成後再次驗證 `npm run typecheck`、`npm run build` 與 `as any` 搜尋，結果皆維持正常，且沒有新增 UI state 或 store 分叉。
