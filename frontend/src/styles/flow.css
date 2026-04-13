@@ -1,0 +1,50 @@
+.rf-wrapper {
+  /* keep layout sizing in inline style; this class holds visual states */
+}
+
+/* shake animation for invalid connect attempts */
+@keyframes shake {
+  0% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+  100% { transform: translateX(0); }
+}
+
+.rf-wrapper.shake {
+  animation: shake 360ms ease-in-out;
+  border: 2px solid rgba(255,0,0,0.18);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+}
+
+/* smooth highlight transition for nodes (nodes set data.highlighted=true/false) */
+.react-flow__node {
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+
+.react-flow__node .node-highlight {
+  transition: all 200ms ease;
+}
+
+.react-flow__node.connection-preview-valid .node-highlight {
+  outline: 3px solid rgba(34, 197, 94, 0.95);
+  outline-offset: 3px;
+}
+
+.react-flow__node.connection-preview-invalid .node-highlight {
+  outline: 3px solid rgba(239, 68, 68, 0.95);
+  outline-offset: 3px;
+}
+
+.react-flow__node.connection-preview-valid .node-target-handle {
+  background: #22c55e !important;
+  border-color: #dcfce7 !important;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.3);
+}
+
+.react-flow__node.connection-preview-invalid .node-target-handle {
+  background: #ef4444 !important;
+  border-color: #fee2e2 !important;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25);
+}
