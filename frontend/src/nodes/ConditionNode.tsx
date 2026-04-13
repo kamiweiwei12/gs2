@@ -4,6 +4,7 @@ import {
   CONDITION_FALSE_HANDLE,
   CONDITION_TRUE_HANDLE,
   CONTINUATION_HANDLE,
+  TARGET_HANDLE,
   getFlowNodeHighlighted,
   getFlowNodeParams,
   type FlowNodeData,
@@ -25,7 +26,7 @@ const ConditionNode: React.FC<NodeProps<FlowNodeData>> = ({ data }) => {
       position: 'relative',
       transition: 'all 200ms ease'
     }}>
-      <Handle className="node-target-handle" type="target" position={Position.Top} id="in" style={{ background: '#fff', width: 12, height: 12 }} />
+      <Handle className="node-target-handle" type="target" position={Position.Top} id={TARGET_HANDLE} style={{ background: '#fff', width: 12, height: 12 }} />
       <div style={{ fontWeight: 700, fontSize: 14 }}>❓ If</div>
       <div style={{ fontSize: 12, marginTop: 4, opacity: 0.9 }}>{condition}</div>
       <Handle type="source" position={Position.Right} id={CONDITION_TRUE_HANDLE} style={{ background: '#22c55e', width: 12, height: 12 }} />

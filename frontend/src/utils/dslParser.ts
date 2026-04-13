@@ -63,6 +63,7 @@ const DEFAULT_NODE_LABELS: Record<FlowNodeType, string> = {
 export const CONTINUATION_HANDLE = 'out'
 export const CONDITION_TRUE_HANDLE = 'true'
 export const CONDITION_FALSE_HANDLE = 'false'
+export const TARGET_HANDLE = 'in'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null

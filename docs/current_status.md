@@ -540,6 +540,30 @@
 - `executionEngine.ts` 內的 `'true'` / `'false'` 字串屬執行結果 log，不屬於 handle contract，不應與 source handle 命名來源收斂混為同一個任務
 - `id="in"` 屬 target handle contract；若後續要處理，應另開新的一個原子任務，不要和 branch handle 收斂混做一輪
 
+### 2.32 target handle 命名來源已收斂到共用常數
+
+檔案：
+
+- `frontend/src/utils/dslParser.ts`
+- `frontend/src/nodes/ActionNode.tsx`
+- `frontend/src/nodes/ConditionNode.tsx`
+- `frontend/src/nodes/LoopNode.tsx`
+
+本輪延續前幾輪對 source handle contract 的收斂方式，只處理 target handle 的命名來源一致化，結果如下：
+
+- 重新盤點 `frontend/src/nodes/**/*.tsx`、`frontend/src/components/**/*.tsx`、`frontend/src/utils/validateConnection.ts`、`frontend/src/utils/dslParser.ts` 後，`id="in"` 只出現在 `ActionNode` / `ConditionNode` / `LoopNode` 的 target handle renderer
+- `dslParser.ts` 已新增並導出 `TARGET_HANDLE`，作為目前 target handle contract 的共用命名來源
+- `ActionNode` / `ConditionNode` / `LoopNode` 內原本的 `id="in"` 已改為引用 `TARGET_HANDLE`
+- 盤點確認目前 `validateConnection.ts`、`dslParser.ts` 的 DSL 轉換邏輯，以及 `FlowEditor` 的 connection preview / `onConnect` 都沒有依賴 `connection.targetHandle` 或 raw `'in'`；因此本輪不擴大為 validator / parser 重構，只做 renderer 命名來源收斂
+- `StartNode` 沒有 target handle，本輪不為了「對稱」額外新增規則或行為
+- 本輪沒有修改 store 架構、UI state、`node.data.params` 約定、FlowEditor 架構、execution logic、DSL 格式，也沒有調整 validator 規則本身
+- 本輪完成後重新執行 `npm run typecheck`、`npm run build`，並再次確認 `frontend/src/**/*.ts*` 的 `as any` 仍為 0 筆
+
+目前規則：
+
+- 若 renderer 需要節點輸入 target handle，一律從 `dslParser.ts` 導入 `TARGET_HANDLE`，不要再直接寫 `id="in"`
+- 目前 target handle contract 已形成 renderer 端的穩定命名來源；但 validator / parser / FlowEditor 尚未依賴 `targetHandle` 值，後續若要擴大契約，應另開新的原子任務，不要和本輪命名來源一致化混做
+
 ---
 
 ## 3. 目前已確認解掉的問題
@@ -560,6 +584,8 @@
 - source handle 的命名來源原本仍散落硬編碼 `'out'` / `'true'` / `'false'`，後續若調整契約名稱容易漏改
 - Start / Action / Loop renderer 端原本仍殘留 `id="out"` 硬編碼，導致 continuation handle 的命名來源尚未完全收斂
 - UI / editor / parser / validator 中是否仍有 branch handle 硬編碼殘留，現在已完成盤點並確認 source / branch handle 命名來源已收口
+- Action / Condition / Loop renderer 端原本仍散落 `id="in"` target handle 硬編碼，導致 target handle 的命名來源尚未統一
+- target handle 的 renderer 命名來源現已收斂到 `TARGET_HANDLE`
 
 ### 已驗證
 
@@ -600,6 +626,9 @@
 - branch handle 殘留盤點完成後，`npm run typecheck` 再次成功
 - branch handle 殘留盤點完成後，`npm run build` 再次成功
 - branch handle 殘留盤點完成後，再次搜尋 `frontend/src/**/*.ts*`，`as any` 仍為 0 筆
+- target handle 命名來源收斂後，`npm run typecheck` 再次成功
+- target handle 命名來源收斂後，`npm run build` 再次成功
+- target handle 命名來源收斂後，再次搜尋 `frontend/src/**/*.ts*`，`as any` 仍為 0 筆
 - Vite production build 可產出 `dist/` 結果
 - 開發伺服器可啟動（原本 5173 被占用，實際跑在 5174）
 
@@ -675,10 +704,10 @@
 
 最合理的下一步是：
 
-1. 盤點 `ActionNode` / `ConditionNode` / `LoopNode` 內 `id="in"` target handle 是否也要比照 source handle 收斂為共用常數
-2. 若決定收斂，僅做 target handle 命名來源一致化，不改 validator 行為、DSL 格式或 store 資料模型
+1. 盤點 `FlowEditor` / `validateConnection.ts` 對 `connection.targetHandle` 的實際依賴是否仍為 0，確認目前 target handle contract 是否只存在於 renderer 命名層
+2. 若仍無行為依賴，僅補最小文件或註解澄清，不調整 validator 規則、DSL 格式或連線邏輯
 3. 完成後執行 `npm run typecheck`、`npm run build`，並確認 `frontend/src/**/*.ts*` 仍維持無 `as any`
-4. 更新 checkpoint，記錄 target handle contract 是否也已形成單一命名來源
+4. 更新 checkpoint，記錄 target handle contract 是否需要進一步顯式化，或維持現況即可
 
 ---
 
@@ -686,4 +715,6 @@
 
 目前 frontend 的流程編輯器資料模型已大致完成第一輪收斂：**業務資料集中到 `node.data.params`，UI 狀態保留在 `node.data` 本體**。Inspector、FlowEditor、ChatPanel、DSL parser、executionEngine 已完成第一輪對齊，且 build、`tsc --noEmit`、`npm run typecheck` 都已成功；最新幾輪先把 `start` / `action` / `loop` 的 continuation edge 顯式 `out` handle 契約補進 validator，再把 `flowToDSL()` 內 continuation edge 的相容判定收斂到單一 `isContinuationEdge()` helper，接著導出 `CONTINUATION_HANDLE` / `CONDITION_TRUE_HANDLE` / `CONDITION_FALSE_HANDLE` 共用常數，最後把 `StartNode` / `ActionNode` / `LoopNode` 內剩餘的 `id="out"` 也統一改成引用 `CONTINUATION_HANDLE`，讓 continuation handle 的命名來源進一步完整對齊到 DSL helper / validator / condition renderer / 單一路徑 renderer。
 
-此外，`FlowEditor` / `Stage` / `Toolbar` 周邊的盤點也已完成：目前沒有直接讀寫 `node.data` 業務欄位的殘留點。四個 node renderer、InspectorPanel 三個 editor，以及 `flowStore.ts` 內最後一個 `params` 合併 `as any` 都已清理完成；目前 `frontend/src/**/*.ts*` 已沒有 `as any` 使用點。最新幾輪也已補上 FlowEditor 的拖曳連線即時驗證回饋：合法 target 會顯示綠色高亮、不合法 target 會顯示紅色高亮，拖曳到不合法 target 時右上角會顯示 validator reason，且這個 preview reason 與實際 `onConnect` 失敗後的錯誤提示現在已統一為同一個 overlay 呈現；preview 狀態會在拖曳結束時清除，同時維持 DSL / execution logic 與既有資料模型不變。本輪則進一步完成 branch handle 殘留盤點，確認 `out` / `true` / `false` 在 source handle contract 範圍內已完全收口，剩餘的 `id="in"` 只屬 target handle 議題，應另開下一個原子任務處理。本輪完成後再次驗證 `npm run typecheck`、`npm run build` 與 `as any` 搜尋，結果皆維持正常，且沒有新增 UI state 或 store 分叉。
+此外，`FlowEditor` / `Stage` / `Toolbar` 周邊的盤點也已完成：目前沒有直接讀寫 `node.data` 業務欄位的殘留點。四個 node renderer、InspectorPanel 三個 editor，以及 `flowStore.ts` 內最後一個 `params` 合併 `as any` 都已清理完成；目前 `frontend/src/**/*.ts*` 已沒有 `as any` 使用點。最新幾輪也已補上 FlowEditor 的拖曳連線即時驗證回饋：合法 target 會顯示綠色高亮、不合法 target 會顯示紅色高亮，拖曳到不合法 target 時右上角會顯示 validator reason，且這個 preview reason 與實際 `onConnect` 失敗後的錯誤提示現在已統一為同一個 overlay 呈現；preview 狀態會在拖曳結束時清除，同時維持 DSL / execution logic 與既有資料模型不變。
+
+本輪則依照原子化工作方式，只處理 `ActionNode` / `ConditionNode` / `LoopNode` 的 target handle 命名來源，將原本散落的 `id="in"` 收斂為 `TARGET_HANDLE`，並確認 validator / parser / FlowEditor 目前都沒有依賴 `targetHandle` 值；因此這次只做 renderer 命名來源一致化，沒有改動 validator 規則、DSL 格式、store 架構或執行語義。完成後再次驗證 `npm run typecheck`、`npm run build` 與 `as any` 搜尋，結果皆維持正常。
