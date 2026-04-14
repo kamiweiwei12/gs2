@@ -564,6 +564,164 @@
 - 若 renderer 需要節點輸入 target handle，一律從 `dslParser.ts` 導入 `TARGET_HANDLE`，不要再直接寫 `id="in"`
 - 目前 target handle contract 已形成 renderer 端的穩定命名來源；但 validator / parser / FlowEditor 尚未依賴 `targetHandle` 值，後續若要擴大契約，應另開新的原子任務，不要和本輪命名來源一致化混做
 
+### 2.33 專案協作規則與新對話模板已文件化
+
+檔案：
+
+- `.clinerules`
+- `ARCH.md`
+- `docs/cline_prompt_templates.md`
+- `docs/current_status.md`
+
+本輪依照「把對話要求外部化」的方向，只處理協作規則與新對話起手模板的文件化，結果如下：
+
+- 已新增根目錄 `.clinerules`，將這個專案固定遵守的協作規則收斂成單一入口
+- `.clinerules` 已明確要求新對話先讀 `.clinerules`、`ARCH.md`、`docs/current_status.md`，再分析、再規劃、最後才改碼
+- 已新增 `ARCH.md`，摘要化整理目前流程編輯器的核心資料分層、handle contract、主要檔案與不可破壞的 invariants
+- 已新增 `docs/cline_prompt_templates.md`，提供通用起手模板、方案確認後實作模板，以及連續修不好時的中止模板
+- 本輪沒有修改 frontend 執行邏輯、validator 規則、store、DSL 格式或 `node.data.params` / `node.data` 的資料模型，只是把既有約束正式文件化
+
+目前規則：
+
+- 每次新對話開始時，優先閱讀 `.clinerules`、`ARCH.md`、`docs/current_status.md`
+- 若任務不是 trivial，先輸出繁體中文理解與最小 implementation plan，再等待確認
+- 協作規則、架構摘要與提示模板現在都已有獨立文件，不需要每次從零重新描述
+
+### 2.34 target handle 的 runtime 依賴盤點已完成，契約維持 renderer 命名來源層級
+
+檔案：
+
+- `frontend/src/components/FlowEditor/FlowEditor.tsx`
+- `frontend/src/utils/validateConnection.ts`
+- `frontend/src/utils/dslParser.ts`
+- `docs/current_status.md`
+
+本輪依照上一個 checkpoint 的建議，只做一個最小 atomic task：盤點 `FlowEditor` / `validateConnection.ts` / `dslParser.ts` 是否真的對 `connection.targetHandle` 有 runtime 行為依賴，結果如下：
+
+- 重新搜尋 `targetHandle` / `TARGET_HANDLE` 後，確認 `TARGET_HANDLE` 目前只在 node renderer 端作為 target handle `id` 的共用命名來源
+- `FlowEditor` 目前只是在 `isValidConnection()` 中把 `candidate.targetHandle` 原樣帶進 `Connection` 物件；拖曳 hover preview 路徑仍固定以 `targetHandle: null` 做驗證
+- `validateConnection()` 目前完全沒有讀取 `connection.targetHandle`，實際連線合法性仍只由 source handle、node type、incoming / outgoing 限制、loop scope 與 cycle detection 決定
+- `dslParser.ts` 目前只導出 `TARGET_HANDLE` 常數，DSL → Flow 與 Flow → DSL 都沒有依賴 `targetHandle` 值
+- 因此本輪不擴大修改 validator 規則、FlowEditor 行為、DSL 格式或 execution semantics，只補上一則最小註解與 checkpoint 澄清，維持 target handle 契約目前停留在 renderer 命名來源層級
+
+目前規則：
+
+- 若 renderer 需要 target handle 命名，仍一律從 `dslParser.ts` 導入 `TARGET_HANDLE`
+- 在目前架構下，`connection.targetHandle` 不是 runtime 驗證或 DSL 轉換的真相來源；不要誤以為 renderer 已導入 `TARGET_HANDLE` 就代表 validator / parser 已依賴它
+- 若後續真的要把 target handle 納入連線契約，應另開新的原子任務，同步盤點並對齊 `FlowEditor`、`validateConnection.ts`、`dslParser.ts`、自訂 node renderer 與驗證路徑，不要在小任務中順手擴大
+
+### 2.35 loop 控制流語義閉合度盤點已完成，結論先文件化、不動程式碼
+
+檔案：
+
+- `docs/current_status.md`
+
+本輪依照「先做語義盤點、不要急著改碼」的要求，只盤點 loop 在 parser / validator / editor / executionEngine 之間的控制流契約是否已完整閉合，結果如下：
+
+- 已確認 loop 在 DSL / execution 層的主語義是 structured control node，而不是 graph 上的回邊：`LoopDSL` 以 `children` 表示 body，`executionEngine` 以 `iterations` 重複執行 `children`
+- 已確認目前 editor graph 仍全域禁止 cycle，因此 loop 的重複不是靠 edge 回圈，而是靠 `simulateDSLExecution()` 在 DSL 層重跑 body
+- 已確認 `dslToFlow()` 目前會把 loop body entry 與 loop 後續 continuation 都建立成 `sourceHandle: out` 的 continuation edge，沒有額外 body / exit handle 區分
+- 已確認 `flowToDSL()` 目前會從 loop 的 plain outgoing edges 中，用 `target.position.x > source.position.x` 的幾何規則推定哪一條是 body edge，剩下那條才視為 continuation edge
+- 已確認 `validateConnection()` 對 loop 目前只有最小限制：source handle 必須是 `out`、target 不能已有 incoming edge、不可跨 loop scope、不可形成 cycle；但它不知道哪條是 body、哪條是 exit，也沒有顯式限制「最多一條 body + 一條 continuation」
+- 已確認 `FlowEditor` 的 `computeLoopParents()` 目前是從 loop 節點沿所有可達邊做 BFS，因此 `loopParent` 比較接近 downstream reachability，而不是只沿 loop body edge 計算的 body-only scope
+- 已確認 `LoopNode` renderer 目前只暴露一個 `out` source handle；和 `ConditionNode` 已顯式區分 `true` / `false` / `out` 相比，loop 的不同 outgoing role 仍未顯式化
+- 已確認 `executionEngine` 與 DSL loop semantics 一致：真正控制重複的是 `iterations`；`condition` 目前只用於顯示 stage event / log，不參與 loop 是否繼續
+
+目前結論可分成三層：
+
+1. 已明確成立的 contract
+   - loop 在 DSL 層是 structured node：`children` 表 body，`iterations` 表重複次數
+   - editor graph 不使用 loop back-edge；cycle detection 仍是全域禁止
+   - runtime execution semantics 與 DSL 一致，都是 repeat N times，而不是依賴 graph cycle
+   - loop source handle 目前唯一合法輸出仍是 `CONTINUATION_HANDLE`
+
+2. 仍屬隱含行為、尚未完整閉合的部分
+   - loop body edge 與 continuation edge 沒有顯式 contract，兩者目前都共用 `out`
+   - Flow → DSL 仍依賴節點幾何位置推定 body edge，語義不夠穩定
+   - validator 尚未把 loop outgoing role 顯式化，因此無法單獨限制 body / continuation 的數量
+   - `computeLoopParents()` 目前採 reachability 模型，不是精確的 body-only loop scope
+   - nested loop 的 `loopParent` 仍偏向 first-write-wins，而不是嚴格 innermost scope semantics
+
+3. 是否需要下一輪實作
+   - 若 2.35 的目標只是「盤點並文件化」，本輪已完成
+   - 若目標是讓 loop 控制流語義「完整閉合」，目前答案是否；仍需要後續獨立原子任務收斂 body edge / continuation edge 契約
+
+本輪沒有修改 frontend 程式碼、validator 規則、DSL 格式、execution semantics 或 UI state，只把既有 loop contract、隱含行為與缺口正式寫進 checkpoint，避免後續把 parser heuristics 誤當成已明確設計的語義契約。
+
+目前規則：
+
+- 在目前架構下，loop 的真正執行語義以 DSL structured node 為準，不應把 editor graph 的無回邊結構誤解為「loop 不存在」
+- 在目前架構下，loop 的 body edge / continuation edge 尚未有顯式 handle contract；`flowToDSL()` 仍只是用幾何位置做還原 heuristic
+- 若後續要補齊 loop 控制流契約，應另開新的原子任務，同步對齊 `LoopNode.tsx`、`validateConnection.ts`、`dslParser.ts`、`FlowEditor.tsx` 與手動驗證路徑；不要在小任務中順手擴大
+
+### 2.36 loop body / exit handle contract 已在 renderer / parser / validator / scope 計算中顯式閉合
+
+檔案：
+
+- `frontend/src/utils/dslParser.ts`
+- `frontend/src/nodes/LoopNode.tsx`
+- `frontend/src/utils/validateConnection.ts`
+- `frontend/src/components/FlowEditor/FlowEditor.tsx`
+
+本輪延續 2.35 的缺口盤點，將 loop body edge 與 continuation / exit edge 的角色用最小改動正式落地，結果如下：
+
+- `dslParser.ts` 已新增 `LOOP_BODY_HANDLE`、`createLoopBodyEdge()` 與 `classifyLoopOutgoingEdges()`，讓 DSL → Flow 以顯式 `sourceHandle: 'body'` 建立 loop body edge，Flow → DSL 則優先讀取顯式 body handle，只有舊資料才 fallback 到原本的幾何判定
+- `LoopNode.tsx` 現在除了底部的 `CONTINUATION_HANDLE` 外，也新增右側 `LOOP_BODY_HANDLE` source handle，讓 editor UI 能直接畫出 loop body 與 loop exit 兩種不同 outgoing role
+- `validateConnection.ts` 現在已知道 loop 有 `body` / `out` 兩種合法 source handle，並透過 `classifyLoopOutgoingEdges()` 對既有 outgoing edges 做角色判定，因此無論是新資料或舊資料，都會限制「body 最多一條、continuation 最多一條」
+- `validateConnection.ts` 仍保留 body entry 的最小結構限制：loop body target 不能已經有其他 incoming edge；但 loop continuation 不再被誤當成 body child 一起套用這條限制
+- `FlowEditor.tsx` 的 `computeLoopParents()` 已改為先用 `classifyLoopOutgoingEdges()` 找出每個 loop 的 body entry，再只沿 body subtree 做 BFS；因此 loop exit downstream 不會再被誤標成同一個 `loopParent`
+- 這一輪沒有改動 `executionEngine.ts` 的 runtime semantics，也沒有修改 cycle detection 的全域規則；loop 仍然是 DSL structured control node，graph 端只是把 body / exit role 顯式化
+
+目前規則：
+
+- loop 節點現在有兩個顯式合法輸出：`LOOP_BODY_HANDLE`（body）與 `CONTINUATION_HANDLE`（exit / continuation）
+- parser、validator、FlowEditor loop scope 計算現在共用同一個 loop outgoing role 分類來源：`classifyLoopOutgoingEdges()`
+- 新資料優先使用顯式 `body` handle；舊資料若尚未帶 `sourceHandle: 'body'`，仍可透過分類 helper 保留相容讀取
+- `loopParent` 現在只代表 body subtree scope，不再包含 loop 自身的 exit downstream
+
+### 2.37 nested loop 的 `loopParent` 已從 first-write-wins 收斂為 innermost scope semantics
+
+檔案：
+
+- `frontend/src/components/FlowEditor/FlowEditor.tsx`
+
+本輪延續 2.36 完成後留下的 nested loop scope 議題，只做一個最小 atomic task：讓 `computeLoopParents()` 對巢狀 loop 採用「內層覆蓋外層」的 innermost semantics，結果如下：
+
+- `FlowEditor.tsx` 的 `computeLoopParents()` 不再在掃描 loop 時直接 first-write-wins 寫入 `mapping`
+- 現在會先為每個 loop 分別計算 body subtree 節點集合，再根據「某個 loop 是否落在其他 loop 的 body subtree 中」推得 loop nesting depth
+- loop scopes 會先依 depth 由外到內排序，再把 body subtree 節點寫回 `mapping`；因此外層 loop 會先標記 scope，內層 loop 會在同一批節點上覆寫成更接近的 loop parent
+- 結果是 nested loop body 內的節點，`loopParent` 現在會指向最近的內層 loop，而不是沿用先前的外層 loop
+- `validateConnection.ts` 本輪不需要新增規則；既有的 `targetLoopParent !== sourceLoopParent` 比較在 innermost scope 更精確後，仍能維持「不能直接跨 loop scope 連線」的限制，同時允許同一 innermost scope 內的合法連線
+- 本輪完成後已重新執行 `npm run typecheck` 與 `npm run build`，兩者皆成功；`vite build` 過程只有既有的 Vite CJS Node API deprecation warning，未影響 `dist/` 產物輸出
+
+目前規則：
+
+- `loopParent` 的語義現在是「最近的 body-owner loop」，不是「第一個掃描到的外層 loop」
+- 對 nested loop body 節點而言，scope 判定應優先反映 innermost loop，而不是 outer loop reachability
+- 既有 validator 仍以 `loopParent` 是否相等作為 loop scope 邊界判定；因此若後續再調整 scope 模型，必須同步重新檢查 `validateConnection.ts`
+
+### 2.38 FlowEditor 已新增 dev-only 自動驗證器，用固定 fixture 批量比對 preview / submit 一致性
+
+檔案：
+
+- `frontend/src/components/FlowEditor/FlowEditor.tsx`
+- `frontend/src/styles/flow.css`
+
+本輪延續 2.37 後的 scope UX 驗證需求，但刻意不改 validator / DSL semantics，只新增一個 dev-only 的自動驗證入口，結果如下：
+
+- `FlowEditor.tsx` 已新增 `import.meta.env.DEV` 條件下才顯示的 `Run Auto-Verify` 按鈕，正式環境不會看到這組工具 UI
+- auto verify 會在 `FlowEditor` local state / function scope 內建立固定的 `nested loop × condition` fixture，案例同時覆蓋 inner / outer loop、condition branch / continuation，以及跨 scope target
+- 每個案例都會跑兩次 `validateConnection()`：一次模擬拖曳 preview（`targetHandle: null`），一次模擬實際 `onConnect` submit（帶 `TARGET_HANDLE`），然後比對 `valid` 與 `reason` 是否一致
+- 驗證過程會暫時把 fixture 塞進目前畫布，等待 `computeLoopParents()` 的 effect 收斂後再批量檢查，結束後自動還原原本的 `nodes`、`edges` 與 `selectedNode`，避免污染使用者編輯狀態
+- `frontend/src/styles/flow.css` 已補上 `flow-dev-verify-*` 樣式，包含 dev-only button、running / error / report overlay、result list 與 match / mismatch badge，沿用既有 CSS 檔，不另外引入 UI library
+- 本輪仍維持單一真相來源：連線是否合法只由既有 `validateConnection()` 決定；auto verify 只做批量呼叫與結果呈現，不修改規則本身，也不改 DSL / execution semantics
+
+目前規則：
+
+- preview vs submit 一致性驗證屬於開發期工具，只能存在於 `FlowEditor` local state / function scope，不寫入 store 或 `node.data`
+- 自動驗證若需要引用 handle 命名，一律從 `dslParser.ts` 導入 `CONTINUATION_HANDLE`、`CONDITION_TRUE_HANDLE`、`CONDITION_FALSE_HANDLE`、`TARGET_HANDLE`、`LOOP_BODY_HANDLE`
+- auto verify 執行前後都必須自動還原原畫布與選取狀態，避免 fixture 污染真實編輯資料
+
 ---
 
 ## 3. 目前已確認解掉的問題
@@ -586,6 +744,13 @@
 - UI / editor / parser / validator 中是否仍有 branch handle 硬編碼殘留，現在已完成盤點並確認 source / branch handle 命名來源已收口
 - Action / Condition / Loop renderer 端原本仍散落 `id="in"` target handle 硬編碼，導致 target handle 的命名來源尚未統一
 - target handle 的 renderer 命名來源現已收斂到 `TARGET_HANDLE`
+- `connection.targetHandle` 目前在 `FlowEditor` / `validateConnection.ts` / `dslParser.ts` 中是否具有 runtime 行為依賴，現在已完成盤點並確認仍為 0；`TARGET_HANDLE` 目前只屬於 renderer 命名來源契約
+- 新對話缺少固定規則檔、架構摘要與可重用提示模板，現在已完成文件化
+- loop 控制流語義目前哪些 contract 已成立、哪些仍只是 parser / editor 隱含行為，現在已完成盤點並文件化
+- loop body edge / continuation edge 原本未顯式區分，現在 renderer / parser / validator 已對齊到 `body` / `out` contract
+- `computeLoopParents()` 原本會把 loop exit downstream 一起算進 loop scope，現在已改成只沿 loop body subtree 計算 `loopParent`
+- nested loop body 節點原本仍沿用 first-write-wins 的外層 `loopParent`，現在已收斂為 innermost scope semantics
+- nested loop × condition 跨 scope 連線原本缺少可重複執行的 preview / submit 一致性檢查工具，現在已補上 dev-only auto verify 入口與固定 fixture
 
 ### 已驗證
 
@@ -629,6 +794,14 @@
 - target handle 命名來源收斂後，`npm run typecheck` 再次成功
 - target handle 命名來源收斂後，`npm run build` 再次成功
 - target handle 命名來源收斂後，再次搜尋 `frontend/src/**/*.ts*`，`as any` 仍為 0 筆
+- 重新搜尋 `frontend/src/**/*.ts*` 的 `targetHandle|TARGET_HANDLE` 後，確認 runtime 依賴點仍只包含 `FlowEditor` 的 pass-through、`dslParser.ts` 的常數定義，以及 node renderer 的 target handle `id`
+- 透過讀碼盤點確認 loop 在 `dslParser.ts`、`validateConnection.ts`、`FlowEditor.tsx`、`LoopNode.tsx`、`executionEngine.ts` 之間的語義現況：DSL / execution 已一致，但 editor 端的 body edge / continuation edge 契約仍未顯式閉合
+- loop body / exit handle contract 落地後，`npm run typecheck` 再次成功
+- loop body / exit handle contract 落地後，`npm run build` 再次成功
+- nested loop `loopParent` 收斂為 innermost semantics 後，`npm run typecheck` 再次成功
+- nested loop `loopParent` 收斂為 innermost semantics 後，`npm run build` 再次成功
+- dev-only auto verify 入口補齊後，`npm run typecheck` 再次成功
+- dev-only auto verify 入口補齊後，`npm run build` 再次成功
 - Vite production build 可產出 `dist/` 結果
 - 開發伺服器可啟動（原本 5173 被占用，實際跑在 5174）
 
@@ -640,6 +813,9 @@
 - `frontend/src/utils/validateConnection.ts`
 - `frontend/src/store/flowStore.ts`
 - `frontend/src/components/FlowEditor/FlowEditor.tsx`
+- `.clinerules`
+- `ARCH.md`
+- `docs/cline_prompt_templates.md`
 - `frontend/src/components/ChatPanel/ChatPanel.tsx`
 - `frontend/src/utils/executionEngine.ts`
 - `frontend/src/components/InspectorPanel/ActionEditor.tsx`
@@ -694,6 +870,8 @@
 
 未來如果重開新對話，請先讀：
 
+- `.clinerules`
+- `ARCH.md`
 - `docs/current_status.md`
 
 再開始後續分析與實作，避免上下文遺失。
@@ -704,10 +882,9 @@
 
 最合理的下一步是：
 
-1. 盤點 `FlowEditor` / `validateConnection.ts` 對 `connection.targetHandle` 的實際依賴是否仍為 0，確認目前 target handle contract 是否只存在於 renderer 命名層
-2. 若仍無行為依賴，僅補最小文件或註解澄清，不調整 validator 規則、DSL 格式或連線邏輯
-3. 完成後執行 `npm run typecheck`、`npm run build`，並確認 `frontend/src/**/*.ts*` 仍維持無 `as any`
-4. 更新 checkpoint，記錄 target handle contract 是否需要進一步顯式化，或維持現況即可
+1. 先在 dev mode 實際點擊 `Run Auto-Verify`，確認目前 fixture 下 preview / submit 是否全數 match，並記錄是否出現真實 mismatch case
+2. 若 auto verify 發現 mismatch，再另開新的原子任務，最小範圍收斂 `FlowEditor.tsx`、`validateConnection.ts` 與 `dslParser.ts` 的 preview / submit 路徑，不直接擴大到 DSL runtime semantics
+3. 若要讓這組驗證更可回歸，再另開新的原子任務補第二組 fixture（例如 occupied handle / cycle / nested exit downstream），但仍維持 dev-only 與 local-state 實作
 
 ---
 
@@ -717,4 +894,4 @@
 
 此外，`FlowEditor` / `Stage` / `Toolbar` 周邊的盤點也已完成：目前沒有直接讀寫 `node.data` 業務欄位的殘留點。四個 node renderer、InspectorPanel 三個 editor，以及 `flowStore.ts` 內最後一個 `params` 合併 `as any` 都已清理完成；目前 `frontend/src/**/*.ts*` 已沒有 `as any` 使用點。最新幾輪也已補上 FlowEditor 的拖曳連線即時驗證回饋：合法 target 會顯示綠色高亮、不合法 target 會顯示紅色高亮，拖曳到不合法 target 時右上角會顯示 validator reason，且這個 preview reason 與實際 `onConnect` 失敗後的錯誤提示現在已統一為同一個 overlay 呈現；preview 狀態會在拖曳結束時清除，同時維持 DSL / execution logic 與既有資料模型不變。
 
-本輪則依照原子化工作方式，只處理 `ActionNode` / `ConditionNode` / `LoopNode` 的 target handle 命名來源，將原本散落的 `id="in"` 收斂為 `TARGET_HANDLE`，並確認 validator / parser / FlowEditor 目前都沒有依賴 `targetHandle` 值；因此這次只做 renderer 命名來源一致化，沒有改動 validator 規則、DSL 格式、store 架構或執行語義。完成後再次驗證 `npm run typecheck`、`npm run build` 與 `as any` 搜尋，結果皆維持正常。
+本輪先依照 2.35 的建議，把 loop body / exit contract 做成一個獨立原子任務正式落地：`dslParser.ts` 已以 `LOOP_BODY_HANDLE` 顯式建立與還原 loop body edge，`LoopNode.tsx` 已暴露 body / exit 兩個不同 source handle，`validateConnection.ts` 已可辨識並限制 body / continuation 各最多一條，`FlowEditor.tsx` 的 `computeLoopParents()` 也已改成只沿 body subtree 計算 scope。接著又補上第二個最小原子任務：nested loop body 節點的 `loopParent` 現在會指向最近的 innermost loop，而不再停留在 first-write-wins 的外層 loop 標記。這一輪再往前補上一個純開發期的最小驗證工具：`FlowEditor` 現在可用固定 `nested loop × condition` fixture 批量比對 preview / submit 的 `validateConnection()` 結果，並在結束後自動還原原畫布，讓 scope UX 分叉問題之後可以更穩定回歸。runtime execution semantics、cycle detection 與 `node.data.params` / `node.data` 的資料分層則維持不變；目前下一步較合理的方向，已收斂為實際跑一次 auto verify，確認是否出現真實 mismatch case。

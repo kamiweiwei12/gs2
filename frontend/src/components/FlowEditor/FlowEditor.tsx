@@ -23,6 +23,12 @@ import ConditionNode from '../../nodes/ConditionNode'
 import Toolbar from '../Toolbar/Toolbar'
 import { useFlowStore } from '../../store/flowStore'
 import {
+  CONDITION_FALSE_HANDLE,
+  CONDITION_TRUE_HANDLE,
+  CONTINUATION_HANDLE,
+  LOOP_BODY_HANDLE,
+  TARGET_HANDLE,
+  classifyLoopOutgoingEdges,
   createFlowNodeData,
   flowToDSL,
   getFlowNodeLoopParent,
@@ -31,7 +37,7 @@ import {
   type FlowNodeData,
 } from '../../utils/dslParser'
 import { simulateDSLExecution } from '../../utils/executionEngine'
-import { validateConnection } from '../../utils/validateConnection'
+import { validateConnection, type ConnectionValidationResult } from '../../utils/validateConnection'
 
 const nodeTypes = {
   start: StartNode,
@@ -58,6 +64,228 @@ const createEmptyConnectionPreview = (): ConnectionPreviewState => ({
   active: false,
   valid: null,
 })
+
+type AutoVerifyCaseDefinition = {
+  id: string
+  label: string
+  connection: Connection
+}
+
+type AutoVerifyCaseResult = {
+  id: string
+  label: string
+  preview: ConnectionValidationResult
+  submit: ConnectionValidationResult
+  matches: boolean
+}
+
+type AutoVerifyReport = {
+  fixtureLabel: string
+  ranAt: string
+  total: number
+  matched: number
+  mismatched: number
+  results: AutoVerifyCaseResult[]
+}
+
+type AutoVerifyFixture = {
+  nodes: FlowEditorNode[]
+  edges: Edge[]
+  cases: AutoVerifyCaseDefinition[]
+}
+
+const isDevMode = import.meta.env.DEV
+
+const waitForNextAnimationFrame = () =>
+  new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve())
+  })
+
+const createAutoVerifyEdge = (source: string, target: string, partial: Partial<Edge> = {}): Edge => ({
+  id: `verify-${source}-${target}-${partial.sourceHandle ?? 'default'}`,
+  source,
+  target,
+  animated: false,
+  ...partial,
+})
+
+const buildAutoVerifyFixture = (): AutoVerifyFixture => {
+  const ids = {
+    start: 'verify_start',
+    outerLoop: 'verify_loop_outer',
+    innerLoop: 'verify_loop_inner',
+    innerCondition: 'verify_condition_inner',
+    innerAction: 'verify_action_inner',
+    outerBodyAction: 'verify_action_outer_body',
+    outerExitAction: 'verify_action_outer_exit',
+    outerCondition: 'verify_condition_outer_free',
+  }
+
+  const nodes: FlowEditorNode[] = [
+    {
+      id: ids.start,
+      type: 'start',
+      position: { x: 80, y: 180 },
+      data: createFlowNodeData('start', { label: 'Verify Start' }),
+    },
+    {
+      id: ids.outerLoop,
+      type: 'loop',
+      position: { x: 320, y: 180 },
+      data: createFlowNodeData('loop', { label: 'Outer Loop' }),
+    },
+    {
+      id: ids.innerLoop,
+      type: 'loop',
+      position: { x: 560, y: 120 },
+      data: createFlowNodeData('loop', { label: 'Inner Loop' }),
+    },
+    {
+      id: ids.innerCondition,
+      type: 'condition',
+      position: { x: 820, y: 120 },
+      data: createFlowNodeData('condition', { label: 'Inner Condition' }),
+    },
+    {
+      id: ids.innerAction,
+      type: 'action',
+      position: { x: 1080, y: 40 },
+      data: createFlowNodeData('action', { label: 'Inner Action' }),
+    },
+    {
+      id: ids.outerBodyAction,
+      type: 'action',
+      position: { x: 820, y: 320 },
+      data: createFlowNodeData('action', { label: 'Outer Body Action' }),
+    },
+    {
+      id: ids.outerExitAction,
+      type: 'action',
+      position: { x: 320, y: 440 },
+      data: createFlowNodeData('action', { label: 'Outer Exit Action' }),
+    },
+    {
+      id: ids.outerCondition,
+      type: 'condition',
+      position: { x: 80, y: 440 },
+      data: createFlowNodeData('condition', { label: 'Outer Free Condition' }),
+    },
+  ]
+
+  const edges: Edge[] = [
+    createAutoVerifyEdge(ids.start, ids.outerLoop, { sourceHandle: CONTINUATION_HANDLE }),
+    createAutoVerifyEdge(ids.outerLoop, ids.innerLoop, {
+      sourceHandle: LOOP_BODY_HANDLE,
+      style: { stroke: '#f59e0b' },
+    }),
+    createAutoVerifyEdge(ids.outerLoop, ids.outerExitAction, {
+      sourceHandle: CONTINUATION_HANDLE,
+    }),
+    createAutoVerifyEdge(ids.innerLoop, ids.innerCondition, {
+      sourceHandle: LOOP_BODY_HANDLE,
+      style: { stroke: '#f59e0b' },
+    }),
+    createAutoVerifyEdge(ids.innerLoop, ids.outerBodyAction, {
+      sourceHandle: CONTINUATION_HANDLE,
+    }),
+    createAutoVerifyEdge(ids.innerCondition, ids.innerAction, {
+      sourceHandle: CONDITION_TRUE_HANDLE,
+      style: { stroke: '#22c55e' },
+    }),
+  ]
+
+  const cases: AutoVerifyCaseDefinition[] = [
+    {
+      id: 'cond-false-to-outer-condition',
+      label: 'Inner Condition.false → Outer Free Condition',
+      connection: {
+        source: ids.innerCondition,
+        sourceHandle: CONDITION_FALSE_HANDLE,
+        target: ids.outerCondition,
+        targetHandle: TARGET_HANDLE,
+      },
+    },
+    {
+      id: 'cond-out-to-outer-condition',
+      label: 'Inner Condition.out → Outer Free Condition',
+      connection: {
+        source: ids.innerCondition,
+        sourceHandle: CONTINUATION_HANDLE,
+        target: ids.outerCondition,
+        targetHandle: TARGET_HANDLE,
+      },
+    },
+    {
+      id: 'outer-body-action-to-inner-condition',
+      label: 'Outer Body Action.out → Inner Condition',
+      connection: {
+        source: ids.outerBodyAction,
+        sourceHandle: CONTINUATION_HANDLE,
+        target: ids.innerCondition,
+        targetHandle: TARGET_HANDLE,
+      },
+    },
+    {
+      id: 'outer-condition-true-to-inner-condition',
+      label: 'Outer Free Condition.true → Inner Condition',
+      connection: {
+        source: ids.outerCondition,
+        sourceHandle: CONDITION_TRUE_HANDLE,
+        target: ids.innerCondition,
+        targetHandle: TARGET_HANDLE,
+      },
+    },
+    {
+      id: 'outer-condition-out-to-inner-loop',
+      label: 'Outer Free Condition.out → Inner Loop',
+      connection: {
+        source: ids.outerCondition,
+        sourceHandle: CONTINUATION_HANDLE,
+        target: ids.innerLoop,
+        targetHandle: TARGET_HANDLE,
+      },
+    },
+    {
+      id: 'cond-false-to-inner-action',
+      label: 'Inner Condition.false → Inner Action',
+      connection: {
+        source: ids.innerCondition,
+        sourceHandle: CONDITION_FALSE_HANDLE,
+        target: ids.innerAction,
+        targetHandle: TARGET_HANDLE,
+      },
+    },
+    {
+      id: 'outer-loop-body-to-outer-condition',
+      label: 'Outer Loop.body → Outer Free Condition',
+      connection: {
+        source: ids.outerLoop,
+        sourceHandle: LOOP_BODY_HANDLE,
+        target: ids.outerCondition,
+        targetHandle: TARGET_HANDLE,
+      },
+    },
+    {
+      id: 'inner-loop-out-to-outer-condition',
+      label: 'Inner Loop.out → Outer Free Condition',
+      connection: {
+        source: ids.innerLoop,
+        sourceHandle: CONTINUATION_HANDLE,
+        target: ids.outerCondition,
+        targetHandle: TARGET_HANDLE,
+      },
+    },
+  ]
+
+  return {
+    nodes,
+    edges,
+    cases,
+  }
+}
+
+const formatValidationResult = (result: ConnectionValidationResult) =>
+  result.valid ? 'valid' : `invalid: ${result.reason ?? 'Unknown reason'}`
 
 const initialNodes: FlowEditorNode[] = [
   {
@@ -93,10 +321,18 @@ const FlowEditor: React.FC = () => {
   const [connectionPreview, setConnectionPreview] = useState<ConnectionPreviewState>(
     createEmptyConnectionPreview()
   )
+  const [autoVerifyRunning, setAutoVerifyRunning] = useState(false)
+  const [autoVerifyReport, setAutoVerifyReport] = useState<AutoVerifyReport | null>(null)
+  const [autoVerifyError, setAutoVerifyError] = useState<string | null>(null)
   const invalidTimer = useRef<number | null>(null)
   const toolbarTimerRef = useRef<number | null>(null)
   const activeRunIdRef = useRef(0)
   const stopRequestedRef = useRef(false)
+  const nodesRef = useRef(nodes)
+  const edgesRef = useRef(edges)
+
+  nodesRef.current = nodes
+  edgesRef.current = edges
 
   useEffect(() => {
     const max = nodes.reduce((m, n) => {
@@ -143,32 +379,113 @@ const FlowEditor: React.FC = () => {
 
   const computeLoopParents = useCallback((nodesList: FlowEditorNode[], edgeList: Edge[]) => {
     const adj: Record<string, string[]> = {}
+    const outgoingMap = new Map<string, Edge[]>()
+    const nodeMap = new Map<string, FlowEditorNode>(nodesList.map((node) => [node.id, node]))
+
     edgeList.forEach((e) => {
       if (!adj[e.source]) adj[e.source] = []
       adj[e.source].push(e.target)
+
+      const current = outgoingMap.get(e.source) ?? []
+      current.push(e)
+      outgoingMap.set(e.source, current)
     })
-    const loopNodes = nodesList.filter((n) => n.type === 'loop').map((n) => n.id)
-    const mapping: Record<string, string | undefined> = {}
-    for (const loopId of loopNodes) {
+
+    const collectLoopBodySubtree = (loopNode: FlowEditorNode) => {
+      const { bodyEdge } = classifyLoopOutgoingEdges(
+        loopNode,
+        outgoingMap.get(loopNode.id) ?? [],
+        nodeMap
+      )
+
+      if (!bodyEdge) return new Set<string>()
+
       const visited = new Set<string>()
-      const q = (adj[loopId] || []).slice()
+      const q = [bodyEdge.target]
+
       while (q.length) {
         const cur = q.shift()!
         if (visited.has(cur)) continue
         visited.add(cur)
         ;(adj[cur] || []).forEach((x) => q.push(x))
       }
-      visited.delete(loopId)
-      visited.forEach((nid) => {
-        if (!mapping[nid]) mapping[nid] = loopId
-        else mapping[nid] = mapping[nid]
-      })
+
+      visited.delete(loopNode.id)
+
+      return visited
     }
+
+    const loopScopes = nodesList
+      .filter((node) => node.type === 'loop')
+      .map((loopNode) => ({
+        loopId: loopNode.id,
+        bodyNodeIds: collectLoopBodySubtree(loopNode),
+      }))
+      .filter(({ bodyNodeIds }) => bodyNodeIds.size > 0)
+
+    const loopDepths = new Map(
+      loopScopes.map(({ loopId }) => [
+        loopId,
+        loopScopes.reduce(
+          (depth, scope) => depth + (scope.bodyNodeIds.has(loopId) ? 1 : 0),
+          0
+        ),
+      ])
+    )
+
+    loopScopes.sort((a, b) => {
+      const depthDiff = (loopDepths.get(a.loopId) ?? 0) - (loopDepths.get(b.loopId) ?? 0)
+      if (depthDiff !== 0) return depthDiff
+
+      const bodySizeDiff = b.bodyNodeIds.size - a.bodyNodeIds.size
+      if (bodySizeDiff !== 0) return bodySizeDiff
+
+      const loopNodeA = nodeMap.get(a.loopId)
+      const loopNodeB = nodeMap.get(b.loopId)
+
+      if (loopNodeA && loopNodeB) {
+        if (loopNodeA.position.x !== loopNodeB.position.x) {
+          return loopNodeA.position.x - loopNodeB.position.x
+        }
+
+        if (loopNodeA.position.y !== loopNodeB.position.y) {
+          return loopNodeA.position.y - loopNodeB.position.y
+        }
+      }
+
+      return a.loopId.localeCompare(b.loopId)
+    })
+
+    const mapping: Record<string, string | undefined> = {}
+    loopScopes.forEach(({ loopId, bodyNodeIds }) => {
+      bodyNodeIds.forEach((nodeId) => {
+        mapping[nodeId] = loopId
+      })
+    })
+
     return mapping
   }, [])
 
   const resetConnectionPreview = useCallback(() => {
     setConnectionPreview(createEmptyConnectionPreview())
+  }, [])
+
+  const waitForLoopParentSettlement = useCallback(async () => {
+    let previousSignature = ''
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await waitForNextAnimationFrame()
+
+      const signature = nodesRef.current
+        .map((node) => `${node.id}:${getFlowNodeLoopParent(node.data) ?? ''}`)
+        .join('|')
+
+      if (signature === previousSignature) {
+        return
+      }
+
+      previousSignature = signature
+    }
   }, [])
 
   const getConnectionValidation = useCallback(
@@ -358,6 +675,95 @@ const FlowEditor: React.FC = () => {
     toolbarTimerRef.current = window.setTimeout(() => setToolbarStatus(null), 1800)
   }, [])
 
+  const runAutoVerify = useCallback(async () => {
+    if (autoVerifyRunning) return
+
+    if (isRunning) {
+      setTransientToolbarStatus('请先停止模拟执行，再运行 Auto Verify')
+      return
+    }
+
+    const originalNodes = nodesRef.current
+    const originalEdges = edgesRef.current
+    const originalSelectedNode = useFlowStore.getState().selectedNode
+
+    setAutoVerifyRunning(true)
+    setAutoVerifyError(null)
+    setAutoVerifyReport(null)
+    setInvalidMessage(null)
+    resetConnectionPreview()
+
+    try {
+      const fixture = buildAutoVerifyFixture()
+
+      setSelectedNode(null)
+      setNodes(fixture.nodes)
+      setEdges(fixture.edges)
+
+      await waitForLoopParentSettlement()
+
+      const latestNodes = nodesRef.current
+      const latestEdges = edgesRef.current
+      const results = fixture.cases.map<AutoVerifyCaseResult>((testCase) => {
+        const previewResult = validateConnection(
+          {
+            ...testCase.connection,
+            targetHandle: null,
+          },
+          latestNodes,
+          latestEdges
+        )
+
+        const submitResult = validateConnection(
+          {
+            ...testCase.connection,
+            targetHandle: testCase.connection.targetHandle ?? TARGET_HANDLE,
+          },
+          latestNodes,
+          latestEdges
+        )
+
+        return {
+          id: testCase.id,
+          label: testCase.label,
+          preview: previewResult,
+          submit: submitResult,
+          matches:
+            previewResult.valid === submitResult.valid &&
+            (previewResult.reason ?? '') === (submitResult.reason ?? ''),
+        }
+      })
+
+      const matched = results.filter((item) => item.matches).length
+      const mismatched = results.length - matched
+
+      setAutoVerifyReport({
+        fixtureLabel: 'nested loop × condition',
+        ranAt: new Date().toLocaleString('zh-TW', { hour12: false }),
+        total: results.length,
+        matched,
+        mismatched,
+        results,
+      })
+
+      setTransientToolbarStatus(
+        mismatched === 0
+          ? 'Auto Verify 完成：preview / submit 一致'
+          : `Auto Verify 完成：发现 ${mismatched} 个分叉`
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Auto Verify 执行失败'
+      setAutoVerifyError(message)
+      setTransientToolbarStatus('Auto Verify 执行失败')
+    } finally {
+      setNodes(originalNodes)
+      setEdges(originalEdges)
+      setSelectedNode(originalSelectedNode)
+      await waitForLoopParentSettlement()
+      setAutoVerifyRunning(false)
+    }
+  }, [autoVerifyRunning, isRunning, resetConnectionPreview, setEdges, setNodes, setSelectedNode, setTransientToolbarStatus, waitForLoopParentSettlement])
+
   useEffect(() => {
     return () => {
       if (toolbarTimerRef.current) window.clearTimeout(toolbarTimerRef.current)
@@ -532,6 +938,17 @@ const FlowEditor: React.FC = () => {
           + Condition
         </button>
 
+        {isDevMode && (
+          <button
+            type="button"
+            className="flow-dev-verify-button"
+            onClick={() => void runAutoVerify()}
+            disabled={autoVerifyRunning || isRunning}
+          >
+            {autoVerifyRunning ? 'Running Auto-Verify…' : 'Run Auto-Verify'}
+          </button>
+        )}
+
         <Toolbar
           isRunning={isRunning}
           statusText={toolbarStatus}
@@ -565,6 +982,76 @@ const FlowEditor: React.FC = () => {
             maxWidth: 320,
           }}>
             ⚠️ {activeInvalidFeedback}
+          </div>
+        )}
+        {(autoVerifyRunning || autoVerifyError || autoVerifyReport) && (
+          <div
+            className={[
+              'flow-dev-verify-overlay',
+              autoVerifyRunning ? 'flow-dev-verify-overlay--running' : '',
+              autoVerifyError ? 'flow-dev-verify-overlay--error' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
+            <div className="flow-dev-verify-title">Auto Verify</div>
+
+            {autoVerifyRunning && (
+              <>
+                <div className="flow-dev-verify-summary">正在建立 nested loop × condition fixture，并比对 preview / submit 一致性…</div>
+                <div className="flow-dev-verify-meta">测试完成后会自动还原当前画布，不写入永久编辑状态。</div>
+              </>
+            )}
+
+            {!autoVerifyRunning && autoVerifyError && (
+              <>
+                <div className="flow-dev-verify-summary">执行失败</div>
+                <div className="flow-dev-verify-result-line">{autoVerifyError}</div>
+              </>
+            )}
+
+            {!autoVerifyRunning && !autoVerifyError && autoVerifyReport && (
+              <>
+                <div className="flow-dev-verify-summary">
+                  Fixture: <strong>{autoVerifyReport.fixtureLabel}</strong> · {autoVerifyReport.matched}/{autoVerifyReport.total} matched · {autoVerifyReport.mismatched} mismatched
+                </div>
+                <div className="flow-dev-verify-meta">执行时间：{autoVerifyReport.ranAt}</div>
+                <ul className="flow-dev-verify-list">
+                  {autoVerifyReport.results.map((item) => (
+                    <li
+                      key={item.id}
+                      className={[
+                        'flow-dev-verify-item',
+                        item.matches ? '' : 'flow-dev-verify-item--mismatch',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      <div className="flow-dev-verify-item-header">
+                        <span>{item.label}</span>
+                        <span
+                          className={[
+                            'flow-dev-verify-status',
+                            item.matches
+                              ? 'flow-dev-verify-status--match'
+                              : 'flow-dev-verify-status--mismatch',
+                          ].join(' ')}
+                        >
+                          {item.matches ? 'MATCH' : 'MISMATCH'}
+                        </span>
+                      </div>
+                      <div className="flow-dev-verify-result-line">
+                        preview: {formatValidationResult(item.preview)}
+                      </div>
+                      <div className="flow-dev-verify-result-line">
+                        submit: {formatValidationResult(item.submit)}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flow-dev-verify-meta">仅比对 current validator / loopParent semantics 下的 `valid` 与 `reason`，本轮不修改规则本身。</div>
+              </>
+            )}
           </div>
         )}
         <ReactFlow

@@ -1,10 +1,12 @@
 import { Connection, Edge, Node } from 'reactflow'
 
 import {
+  LOOP_BODY_HANDLE,
   CONDITION_FALSE_HANDLE,
   CONDITION_TRUE_HANDLE,
   CONTINUATION_HANDLE,
   FlowNodeData,
+  classifyLoopOutgoingEdges,
   getFlowNodeLoopParent,
 } from './dslParser'
 
@@ -23,6 +25,9 @@ const incomingCount = (nodeId: string, edgeList: Edge[]) =>
 
 const outgoingCount = (nodeId: string, edgeList: Edge[]) =>
   edgeList.filter((edge) => edge.source === nodeId).length
+
+const normalizedSourceHandle = (edge: Pick<Edge, 'sourceHandle'>) =>
+  edge.sourceHandle ?? CONTINUATION_HANDLE
 
 const isCyclicConnection = (sourceId: string, targetId: string, edgeList: Edge[]) => {
   const adjacency: Record<string, string[]> = {}
@@ -113,7 +118,7 @@ export const validateConnection = (
     }
 
     const alreadyConnected = edges.some(
-      (edge) => edge.source === sourceNode.id && (edge.sourceHandle ?? CONTINUATION_HANDLE) === handle
+      (edge) => edge.source === sourceNode.id && normalizedSourceHandle(edge) === handle
     )
 
     if (alreadyConnected) {
@@ -126,12 +131,26 @@ export const validateConnection = (
   }
 
   if (sourceNode.type === 'loop') {
-    if (connection.sourceHandle !== CONTINUATION_HANDLE) {
-      return invalid(`Loop nodes must connect using the ${CONTINUATION_HANDLE} handle`)
+    const handle = connection.sourceHandle
+
+    if (!handle || (handle !== LOOP_BODY_HANDLE && handle !== CONTINUATION_HANDLE)) {
+      return invalid(`Loop nodes must connect using the ${LOOP_BODY_HANDLE} / ${CONTINUATION_HANDLE} handles`)
     }
 
-    if (incomingCount(connection.target, edges) > 0) {
-      return invalid('Loop children must be internal and cannot have existing incoming edges')
+    const nodeMap = new Map<string, Node<FlowNodeData>>(nodes.map((node) => [node.id, node]))
+    const currentOutgoing = edges.filter((edge) => edge.source === sourceNode.id)
+    const { bodyEdge, continuationEdge } = classifyLoopOutgoingEdges(sourceNode, currentOutgoing, nodeMap)
+
+    if (handle === LOOP_BODY_HANDLE && bodyEdge) {
+      return invalid('Loop body already connected')
+    }
+
+    if (handle === CONTINUATION_HANDLE && continuationEdge) {
+      return invalid('Loop continuation already connected')
+    }
+
+    if (handle === LOOP_BODY_HANDLE && incomingCount(connection.target, edges) > 0) {
+      return invalid('Loop body entry must be internal and cannot have existing incoming edges')
     }
   }
 

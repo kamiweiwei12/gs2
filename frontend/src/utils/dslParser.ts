@@ -61,8 +61,11 @@ const DEFAULT_NODE_LABELS: Record<FlowNodeType, string> = {
 }
 
 export const CONTINUATION_HANDLE = 'out'
+export const LOOP_BODY_HANDLE = 'body'
 export const CONDITION_TRUE_HANDLE = 'true'
 export const CONDITION_FALSE_HANDLE = 'false'
+// 目前 TARGET_HANDLE 只作為 renderer 端的共用命名來源；FlowEditor / validator / DSL conversion
+// 尚未把 connection.targetHandle 納入行為契約，若要擴大約束請另開原子任務一起收斂。
 export const TARGET_HANDLE = 'in'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -125,8 +128,64 @@ const createEdge = (source: string, target: string, partial: Partial<Edge> = {})
 const createContinuationEdge = (source: string, target: string, partial: Partial<Edge> = {}): Edge =>
   createEdge(source, target, { sourceHandle: CONTINUATION_HANDLE, ...partial })
 
+const createLoopBodyEdge = (source: string, target: string, partial: Partial<Edge> = {}): Edge =>
+  createEdge(source, target, { sourceHandle: LOOP_BODY_HANDLE, ...partial })
+
 const isContinuationEdge = (edge: Edge): boolean =>
   !edge.sourceHandle || edge.sourceHandle === CONTINUATION_HANDLE
+
+const isLoopBodyEdge = (edge: Edge): boolean => edge.sourceHandle === LOOP_BODY_HANDLE
+
+const sortEdgesByTargetPosition = (
+  list: Edge[],
+  nodeMap: Map<string, Node<FlowNodeData>>
+) =>
+  [...list].sort((a, b) => {
+    const targetA = nodeMap.get(a.target)
+    const targetB = nodeMap.get(b.target)
+    if (!targetA || !targetB) return 0
+    return sortNodesByPosition(targetA, targetB)
+  })
+
+const isDeeperEdge = (
+  sourceNode: Node<FlowNodeData>,
+  edge: Edge,
+  nodeMap: Map<string, Node<FlowNodeData>>
+) => {
+  const targetNode = nodeMap.get(edge.target)
+  return targetNode ? targetNode.position.x > sourceNode.position.x : false
+}
+
+export const classifyLoopOutgoingEdges = (
+  loopNode: Node<FlowNodeData>,
+  outgoingEdges: Edge[],
+  nodeMap: Map<string, Node<FlowNodeData>>
+): {
+  bodyEdge?: Edge
+  continuationEdge?: Edge
+} => {
+  const sortedOutgoing = sortEdgesByTargetPosition(outgoingEdges, nodeMap)
+  const plainOutgoing = sortedOutgoing.filter(isContinuationEdge)
+  const explicitBodyEdge = sortedOutgoing.find(isLoopBodyEdge)
+  const legacyBodyEdge = explicitBodyEdge
+    ? undefined
+    : plainOutgoing.find((edge) => isDeeperEdge(loopNode, edge, nodeMap))
+  const bodyEdge = explicitBodyEdge ?? legacyBodyEdge
+  const explicitContinuationEdge = sortedOutgoing.find(
+    (edge) => edge.sourceHandle === CONTINUATION_HANDLE && edge.id !== bodyEdge?.id
+  )
+  const continuationEdge =
+    explicitContinuationEdge ??
+    plainOutgoing.find(
+      (edge) => edge.id !== bodyEdge?.id && !isDeeperEdge(loopNode, edge, nodeMap)
+    ) ??
+    plainOutgoing.find((edge) => edge.id !== bodyEdge?.id)
+
+  return {
+    bodyEdge,
+    continuationEdge,
+  }
+}
 
 const normalizeAction = (input: unknown): ActionDSL | null => {
   if (!isRecord(input)) return null
@@ -262,7 +321,7 @@ export function dslToFlow(input: unknown): FlowGraph {
         const childPlacement = placeSequence(item.children, depth + 1)
         if (childPlacement.firstId) {
           edges.push(
-            createContinuationEdge(item.id, childPlacement.firstId, {
+            createLoopBodyEdge(item.id, childPlacement.firstId, {
               style: { stroke: '#f59e0b' },
             })
           )
@@ -326,20 +385,9 @@ export function flowToDSL(nodes: Node[], edges: Edge[]): DSLDocument {
     outgoingMap.set(edge.source, current)
   })
 
-  const sortEdges = (list: Edge[]) =>
-    [...list].sort((a, b) => {
-      const targetA = nodeMap.get(a.target)
-      const targetB = nodeMap.get(b.target)
-      if (!targetA || !targetB) return 0
-      return sortNodesByPosition(targetA, targetB)
-    })
+  const sortEdges = (list: Edge[]) => sortEdgesByTargetPosition(list, nodeMap)
 
   const getParams = (node: Node<FlowNodeData>) => getFlowNodeParams(node.data)
-
-  const isDeeperEdge = (sourceNode: Node<FlowNodeData>, edge: Edge) => {
-    const targetNode = nodeMap.get(edge.target)
-    return targetNode ? targetNode.position.x > sourceNode.position.x : false
-  }
 
   const buildSequence = (entryId?: string): DSLExecutable[] => {
     const sequence: DSLExecutable[] = []
@@ -371,8 +419,7 @@ export function flowToDSL(nodes: Node[], edges: Edge[]): DSLDocument {
       }
 
       if (node.type === 'loop') {
-        const childEdge = plainOutgoing.find((edge) => isDeeperEdge(node, edge))
-        const continuationEdge = plainOutgoing.find((edge) => edge.id !== childEdge?.id)
+        const { bodyEdge, continuationEdge } = classifyLoopOutgoingEdges(node, outgoing, nodeMap)
         const condition = asString(params.condition, '')
         const iterations = asNumber(params.iterations, 3)
 
@@ -381,7 +428,7 @@ export function flowToDSL(nodes: Node[], edges: Edge[]): DSLDocument {
           type: 'loop',
           condition,
           iterations,
-          children: buildSequence(childEdge?.target),
+          children: buildSequence(bodyEdge?.target),
         })
         currentId = continuationEdge?.target
         continue
@@ -391,7 +438,7 @@ export function flowToDSL(nodes: Node[], edges: Edge[]): DSLDocument {
         const condition = asString(params.condition, '')
         const trueEdge = outgoing.find((edge) => edge.sourceHandle === CONDITION_TRUE_HANDLE)
         const falseEdge = outgoing.find((edge) => edge.sourceHandle === CONDITION_FALSE_HANDLE)
-        const continuationEdge = plainOutgoing.find((edge) => !isDeeperEdge(node, edge))
+        const continuationEdge = plainOutgoing.find((edge) => !isDeeperEdge(node, edge, nodeMap))
 
         sequence.push({
           id: node.id,

@@ -1,0 +1,75 @@
+# Project Rules for Cline
+
+## 0. 啟動規則
+- 每次新對話開始時，先閱讀：
+  - `.clinerules`
+  - `ARCH.md`
+  - `docs/current_status.md`
+- 在完成閱讀前，不要直接改程式。
+- 先用繁體中文總結目前理解、影響檔案、風險與最小修改範圍。
+- 若任務涉及非 trivial 邏輯，先提供簡短 pseudocode / implementation plan，等待確認後再動手。
+
+## 1. 技術棧與風格
+- 使用 React + TypeScript。
+- UI 樣式優先沿用既有 Tailwind / 現有 class 命名與 `frontend/src/styles/flow.css`。
+- 除非必要，不要引入新 UI library。
+- 除非真的沒辦法，避免 inline styles。
+- 優先重用現有元件、helper、store 與樣式模式。
+
+## 2. 資料模型與架構約束
+- `node.data.params` 只放業務資料。
+- `node.data` 本體只放 UI / 編輯器狀態，例如：`label`、`highlighted`、`loopParent`。
+- 不要把業務欄位混進 UI-only state。
+- 不要在小功能任務中改動 DSL / execution semantics。
+- 小任務優先做最小、局部、可回退的修改，不做順手重構。
+
+## 3. Flow Editor 規則
+- 連線合法性必須有單一真相來源，優先共用 `frontend/src/utils/validateConnection.ts`。
+- 若修改連線相關行為，至少同步檢查：
+  - `frontend/src/components/FlowEditor/FlowEditor.tsx`
+  - `frontend/src/utils/validateConnection.ts`
+  - `frontend/src/utils/dslParser.ts`
+  - 自訂節點 renderer
+  - 相關樣式檔
+- 不可破壞以下既有約束：
+  - execution / simulation highlight
+  - loop scope validation
+  - cycle detection
+  - start / action / condition / loop 的 handle contract
+- handle 命名一律優先使用 `dslParser.ts` 導出的共用常數，不要散落硬編碼。
+
+## 4. 程式風格
+- 優先選擇小 helper，而不是大型抽象。
+- 優先寫明確、可讀、好追蹤的程式碼。
+- 避免不必要的 generics 與 type layer。
+- 禁止使用 `as any`。
+- 若已有 typed helper（如 `getFlowNodeParams`、`setFlowNodeLoopParent`、`setFlowNodeHighlighted`），優先沿用。
+- 註解保持精簡；只有在邏輯不直觀時才補充中文註解。
+
+## 5. 協作方式
+- 一次只做一個原子任務。
+- 不要把無關 cleanup、命名調整、格式化混進同一輪。
+- 若某檔案的更動會影響其他檔案，先點名受影響範圍再修改。
+- 若需求與現有架構衝突，先停下來問，不要猜。
+- 若連續兩次修補都沒有把問題收斂，先停止改碼，改做根因整理與風險說明。
+
+## 6. 文件與驗證
+- 每個完成的原子任務，都要更新 `docs/current_status.md`：
+  - 本輪做了什麼
+  - 改了哪些檔案
+  - 新增了哪些規則 / 約定
+  - 驗證方式與結果
+  - 下一個建議原子任務
+- 若有程式碼修改，完成後至少執行：
+  - `npm run typecheck`（於 `frontend/`）
+- 若變更可能影響打包或整體 editor 行為，且成本低，額外執行：
+  - `npm run build`
+
+## 7. 回報格式
+處理 coding task 時，回覆請盡量包含：
+1. 目前理解
+2. 簡短計畫 / pseudocode
+3. 修改檔案列表
+4. 每個檔案為何要這樣改
+5. 驗證結果
+6. 風險 / 後續建議
